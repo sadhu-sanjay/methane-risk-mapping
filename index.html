@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Methane Risk Mapping POC</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" />
+    <style>
+        body { 
+            margin: 0; 
+            font-family: 'Inter', sans-serif; 
+        }
+        #map { height: 100vh; width: 100%; }
+        #controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: #f4f4f4;
+            padding: 15px;
+            border-radius: 8px;
+            z-index: 1000;
+            box-shadow: 0 3px 8px rgba(0,0,0,0.15);
+            font-family: 'Inter', sans-serif;
+            font-weight: 500; /* Bolder font for left panel */
+        }
+        .filter-group { 
+            margin: 12px 0; 
+            display: flex;
+            align-items: center;
+        }
+        .filter-group label { 
+            margin-right: 12px; 
+            font-size: 14px;
+        }
+        select {
+            padding: 8px 12px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            background: #fff;
+            font-family: 'Inter', sans-serif;
+            font-weight: 500;
+            font-size: 14px;
+            cursor: pointer;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        select:hover {
+            border-color: #007bff;
+            box-shadow: 0 1px 5px rgba(0,123,255,0.3);
+        }
+        select:focus {
+            outline: none;
+            border-color: #007bff;
+            box-shadow: 0 0 5px rgba(0,123,255,0.5);
+        }
+        #depth-filter {
+            margin-right: 10px;
+        }
+        #depth-value {
+            font-size: 14px;
+        }
+        #export-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            padding: 8px 16px;
+            cursor: pointer;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            z-index: 1000;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-family: 'Inter', sans-serif;
+            font-weight: 500;
+        }
+        #export-btn:hover {
+            background: #0056b3;
+        }
+        #file-upload { 
+            margin: 12px 0; 
+        }
+        #file-input {
+            font-family: 'Inter', sans-serif;
+            font-weight: 500;
+            font-size: 14px;
+            padding-top: 12px;
+        }
+        .leaflet-popup-content {
+            font-family: 'Inter', sans-serif;
+            font-weight: 400;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <div class="filter-group">
+            <label for="score-filter">Min Risk Score:</label>
+            <select id="score-filter">
+                <option value="0">All</option>
+                <option value="3">3+</option>
+                <option value="6">6+</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label for="depth-filter">Total Depth (ft):</label>
+            <input type="range" id="depth-filter" min="1000" max="10000" value="1000" step="500">
+            <span id="depth-value">1000</span>
+        </div>
+        <div class="filter-group">
+            <label for="county-filter">County:</label>
+            <select id="county-filter">
+                <option value="all">All</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label for="field-filter">Field:</label>
+            <select id="field-filter">
+                <option value="all">All</option>
+            </select>
+        </div>
+        <div id="file-upload">
+            <label for="file-input">Upload GeoJSON/CSV:</label>
+            <br/>
+            <input type="file" id="file-input" accept=".geojson,.json,.csv">
+        </div>
+    </div>
+    <button id="export-btn"><i class="fas fa-download"></i> Export Filtered Data</button>
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+    <script>
+        // Sample well data (simulating GeoJSON) with 20 wells evenly spread across USA
+        let wellData = {
+            type: "FeatureCollection",
+            features: [
+                {
+                    type: "Feature",
+                    geometry: { type: "Point", coordinates: [-102.036, 32.005] },
+                    properties: {
+                        well_id: "W001",
+                        state: "Texas",
+                        county: "Midland",
+                        field: "Spraberry",
+                        completion_year: 1985,
+                        total_depth: 8500,
+                        risk_score: 6,
+                        risk_reason: "Old well, high depth"
+                    }
+                },
+                {
+                    type: "Feature",
+                    geometry: { type: "Point", coordinates: [-103.25, 32.45] },
+                    properties: {
+                        well_id: "W002",
+                        state: "New Mexico",
+                        county: "Eddy",
+                        field: "Delaware",
+                        completion_year: 2005,
+                        total_depth: 6000,
+                        risk_score: 3,
+                        risk_reason: "Moderate depth, newer completion"
+                    }
+                },
+                {
+                    type: "Feature",
+                    geometry: { type: "Point", coordinates: [-97.85, 36.65] },
+                    properties: {
+                        well_id: "W003",
+                        state: "Oklahoma",
+                        county: "Kingfisher",
+                        field: "Mississippian",
+                        completion_year: 1975,
+                        total_depth: 9000,
+                        risk_score: 7,
+                        risk_reason: "Very old well, high depth"
+                    }
+                },
+                {
+                    type: "Feature",
+                    geometry: { type: "Point", coordinates: [-108.25, 39.15] },
+                    properties: {
+                        well_id: "W004",
+                        state: "Colorado",
+                        county: "Garfield",
+                        field: "Piceance",
+                        completion_year: 2010,
+                        total_depth: 5500,
+                        risk_score: 2,
+                        risk_reason: "Recent well, moderate depth"
+                    }
+                },
+                {
+                    type: "Feature",
+                    geometry: { type: "Point", coordinates: [-104.75, 44.45] },
+                    properties: {
+                        well_id: "W005",
+                        state: "Wyoming",
+                        county: "Converse",
+                        field: "Powder River",
+                        completion_year: 1990,
+                        total_depth: 7500,
+                        risk_score: 5,
+                        risk_reason: "Older well, significant depth"
+                    }
+                },
+                {
+                    type: "Feature",
+                    geometry: { type: "Point", coordinates: [-80.95, 39.75] },
+                    properties: {
+                        well_id: "W006",
+                        state: "Pennsylvania",
+                        county: "Washington",
+                        field: "Marcellus",
+                        completion_year: 2000,
+                        total_depth: 6500,
+                        risk_score: 4,
+                        risk_reason: "Moderate age, moderate depth"
+                    }
+                },
+                {
+                    type: "Feature",
+                    geometry: { type: "Point", coordinates: [-93.85, 32.65] },
+                    properties: {
+                        well_id: "W007",
+                        state: "Louisiana",
+                        county: "DeSoto",
+                        field: "Haynesville",
+                        completion_year: 1980,
+                        total_depth: 8000,
+                        risk_score: 6,
+                        risk_reason: "Old well, high depth"
+                    }
+                },
+                {
+                    type: "Feature",
+                    geometry: { type: "Point", coordinates: [-103.45, 47.05] },
+                    properties: {
+                        well_id: "W008",
+                        state: "North Dakota",
+                        county: "McKenzie",
+                        field: "Bakken",
+                        completion_year: 2015,
+                        total_depth: 5000,
+                        risk_score: 1,
+                        risk_reason: "New well, shallow depth"
+                    }
+                },
+                {
+                    type: "Feature",
+                    geometry: { type: "Point", coordinates: [-81.55, 39.85] },
+                    properties: {
+                        well_id: "W009",
+                        state: "Ohio",
+                        county: "Carroll",
+                        field: "Utica",
+                        completion_year: 1995,
+                        total_depth: 7000,
+                        risk_score: 4,
+                        risk_reason: "Moderate age, significant depth"
+                    }
+                },
+                {
+                    type: "Feature",
+                    geometry: { type: "Point", coordinates: [-112.05, 39.25] },
+                    properties: {
+                        well_id: "W010",
+                        state: "Utah",
+                        county: "Duchesne",
+                        field: "Uinta",
+                        completion_year: 2008,
+                        total_depth: 6200,
+                        risk_score: 3,
+                        risk_reason: "Moderate age, moderate depth"
+                    }
+                },
+                {
+                    type: "Feature",
+                    geometry: { type: "Point", coordinates: [-82.85, 38.65] },
+                    properties: {
+                        well_id: "W011",
+                        state: "West Virginia",
+                        county: "Kanawha",
+                        field: "Marcellus",
+                        completion_year: 1978,
+                        total_depth: 8200,
+                        risk_score: 7,
+                        risk_reason: "Very old well, high depth"
+                    }
+                },
+                {
+                    type: "Feature",
+                    geometry: { type: "Point", coordinates: [-87.65, 33.95] },
+                    properties: {
+                        well_id: "W012",
+                        state: "Alabama",
+                        county: "Tuscaloosa",
+                        field: "Black Warrior",
+                        completion_year: 2012,
+                        total_depth: 5800,
+                        risk_score: 2,
+                        risk_reason: "Recent well, moderate depth"
+                    }
+                },
+                {
+                    type: "Feature",
+                    geometry: { type: "Point", coordinates: [-88.95, 37.25] },
+                    properties: {
+                        well_id: "W013",
+                        state: "Illinois",
+                        county: "White",
+                        field: "Illinois Basin",
+                        completion_year: 1988,
+                        total_depth: 7400,
+                        risk_score: 5,
+                        risk_reason: "Older well, significant depth"
+                    }
+                },
+                {
+                    type: "Feature",
+                    geometry: { type: "Point", coordinates: [-85.35, 42.85] },
+                    properties: {
+                        well_id: "W014",
+                        state: "Michigan",
+                        county: "Antrim",
+                        field: "Antrim Shale",
+                        completion_year: 2002,
+                        total_depth: 6700,
+                        risk_score: 4,
+                        risk_reason: "Moderate age, moderate depth"
+                    }
+                },
+                {
+                    type: "Feature",
+                    geometry: { type: "Point", coordinates: [-90.15, 35.15] },
+                    properties: {
+                        well_id: "W015",
+                        state: "Arkansas",
+                        county: "White",
+                        field: "Fayetteville",
+                        completion_year: 1982,
+                        total_depth: 8600,
+                        risk_score: 6,
+                        risk_reason: "Old well, high depth"
+                    }
+                },
+                {
+                    type: "Feature",
+                    geometry: { type: "Point", coordinates: [-79.85, 42.05] },
+                    properties: {
+                        well_id: "W016",
+                        state: "New York",
+                        county: "Chautauqua",
+                        field: "Marcellus",
+                        completion_year: 2018,
+                        total_depth: 5200,
+                        risk_score: 1,
+                        risk_reason: "New well, shallow depth"
+                    }
+                },
+                {
+                    type: "Feature",
+                    geometry: { type: "Point", coordinates: [-119.75, 35.35] },
+                    properties: {
+                        well_id: "W017",
+                        state: "California",
+                        county: "Kern",
+                        field: "San Joaquin",
+                        completion_year: 1979,
+                        total_depth: 8800,
+                        risk_score: 7,
+                        risk_reason: "Very old well, high depth"
+                    }
+                },
+                {
+                    type: "Feature",
+                    geometry: { type: "Point", coordinates: [-94.35, 39.15] },
+                    properties: {
+                        well_id: "W018",
+                        state: "Kansas",
+                        county: "Wilson",
+                        field: "Cherokee",
+                        completion_year: 2007,
+                        total_depth: 6300,
+                        risk_score: 3,
+                        risk_reason: "Moderate age, moderate depth"
+                    }
+                },
+                {
+                    type: "Feature",
+                    geometry: { type: "Point", coordinates: [-108.85, 45.75] },
+                    properties: {
+                        well_id: "W019",
+                        state: "Montana",
+                        county: "Richland",
+                        field: "Bakken",
+                        completion_year: 1998,
+                        total_depth: 7100,
+                        risk_score: 4,
+                        risk_reason: "Moderate age, significant depth"
+                    }
+                },
+                {
+                    type: "Feature",
+                    geometry: { type: "Point", coordinates: [-89.45, 31.65] },
+                    properties: {
+                        well_id: "W020",
+                        state: "Mississippi",
+                        county: "Amite",
+                        field: "Tuscaloosa",
+                        completion_year: 2014,
+                        total_depth: 5900,
+                        risk_score: 2,
+                        risk_reason: "Recent well, moderate depth"
+                    }
+                }
+            ]
+        };
+
+        // Initialize map with zoom control in bottom left
+        const map = L.map('map', {
+            zoomControl: false
+        }).setView([39.0, -98.0], 4);
+
+        // Add zoom control to bottom left
+        L.control.zoom({
+            position: 'bottomleft'
+        }).addTo(map);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        // Add well markers with clustering
+        const markers = L.markerClusterGroup({
+            maxClusterRadius: 40,
+            disableClusteringAtZoom: 10
+        });
+        let wellLayer;
+
+        // Function to populate filter dropdowns
+        function populateFilters() {
+            const counties = [...new Set(wellData.features.map(f => f.properties.county))].sort();
+            const fields = [...new Set(wellData.features.map(f => f.properties.field))].sort();
+
+            const countySelect = document.getElementById('county-filter');
+            countySelect.innerHTML = '<option value="all">All</option>';
+            counties.forEach(county => {
+                const option = document.createElement('option');
+                option.value = county;
+                option.textContent = county;
+                countySelect.appendChild(option);
+            });
+
+            const fieldSelect = document.getElementById('field-filter');
+            fieldSelect.innerHTML = '<option value="all">All</option>';
+            fields.forEach(field => {
+                const option = document.createElement('option');
+                option.value = field;
+                option.textContent = field;
+                fieldSelect.appendChild(option);
+            });
+        }
+
+        // Function to update map with filters
+        function updateMap() {
+            if (wellLayer) markers.removeLayer(wellLayer);
+            
+            const minScore = parseInt(document.getElementById('score-filter').value);
+            const minDepth = parseInt(document.getElementById('depth-filter').value);
+            const county = document.getElementById('county-filter').value;
+            const field = document.getElementById('field-filter').value;
+
+            wellLayer = L.geoJSON(wellData, {
+                filter: feature => {
+                    return (minScore === 0 || feature.properties.risk_score >= minScore) &&
+                           feature.properties.total_depth >= minDepth &&
+                           (county === 'all' || feature.properties.county === county) &&
+                           (field === 'all' || feature.properties.field === field);
+                },
+                pointToLayer: (feature, latlng) => {
+                    const score = feature.properties.risk_score;
+                    const color = score >= 6 ? 'red' : score >= 3 ? 'orange' : 'green';
+                    return L.circleMarker(latlng, {
+                        radius: 8,
+                        fillColor: color,
+                        color: '#000',
+                        weight: 1,
+                        opacity: 1,
+                        fillOpacity: 0.8
+                    });
+                },
+                onEachFeature: (feature, layer) => {
+                    layer.bindPopup(`
+                        <b>Well ID:</b> ${feature.properties.well_id}<br>
+                        <b>State:</b> ${feature.properties.state}<br>
+                        <b>County:</b> ${feature.properties.county}<br>
+                        <b>Field:</b> ${feature.properties.field}<br>
+                        <b>Risk Score:</b> ${feature.properties.risk_score}<br>
+                        <b>Reason:</b> ${feature.properties.risk_reason}
+                    `);
+                }
+            });
+
+            markers.addLayer(wellLayer);
+            map.addLayer(markers);
+        }
+
+        // File upload handler
+        document.getElementById('file-input').addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    if (file.name.endsWith('.geojson') || file.name.endsWith('.json')) {
+                        wellData = JSON.parse(e.target.result);
+                    } else if (file.name.endsWith('.csv')) {
+                        const csv = e.target.result;
+                        const lines = csv.split('\n').filter(line => line.trim());
+                        const headers = lines[0].split(',').map(h => h.trim());
+                        const features = lines.slice(1).map(line => {
+                            const values = line.split(',').map(v => v.trim());
+                            const props = {};
+                            headers.forEach((header, i) => {
+                                if (header === 'longitude' || header === 'latitude') return;
+                                props[header] = isNaN(values[i]) ? values[i] : parseFloat(values[i]);
+                            });
+                            return {
+                                type: "Feature",
+                                geometry: {
+                                    type: "Point",
+                                    coordinates: [
+                                        parseFloat(values[headers.indexOf('longitude')]),
+                                        parseFloat(values[headers.indexOf('latitude')])
+                                    ]
+                                },
+                                properties: props
+                            };
+                        });
+                        wellData = { type: "FeatureCollection", features };
+                    }
+                    populateFilters();
+                    updateMap();
+                } catch (err) {
+                    alert('Error parsing file: ' + err.message);
+                }
+            };
+            reader.readAsText(file);
+        });
+
+        // Event listeners for filters
+        document.getElementById('score-filter').addEventListener('change', updateMap);
+        document.getElementById('depth-filter').addEventListener('input', () => {
+            document.getElementById('depth-value').textContent = document.getElementById('depth-filter').value;
+            updateMap();
+        });
+        document.getElementById('county-filter').addEventListener('change', updateMap);
+        document.getElementById('field-filter').addEventListener('change', updateMap);
+
+        // Export filtered data
+        document.getElementById('export-btn').addEventListener('click', () => {
+            const minScore = parseInt(document.getElementById('score-filter').value);
+            const minDepth = parseInt(document.getElementById('depth-filter').value);
+            const county = document.getElementById('county-filter').value;
+            const field = document.getElementById('field-filter').value;
+            
+            const filteredData = {
+                type: "FeatureCollection",
+                features: wellData.features.filter(feature => 
+                    (minScore === 0 || feature.properties.risk_score >= minScore) &&
+                    feature.properties.total_depth >= minDepth &&
+                    (county === 'all' || feature.properties.county === county) &&
+                    (field === 'all' || feature.properties.field === field)
+                )
+            };
+
+            const dataStr = JSON.stringify(filteredData);
+            const blob = new Blob([dataStr], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'filtered_wells.geojson';
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+
+        // Initialize filters and map
+        populateFilters();
+        updateMap();
+    </script>
+</body>
+</html>
