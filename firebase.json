@@ -1,0 +1,11 @@
+{
+  "hosting": {
+    "site": "methane-risk-mapping",
+    "public": ".",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ]
+  }
+}
